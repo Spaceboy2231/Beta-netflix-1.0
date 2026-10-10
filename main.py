@@ -146,7 +146,8 @@ by https://github.com/harshitkamboj | website: harshitkamboj.in | discord: https
 
 APP_VERSION = "4.5.0"
 
-cookies_folder = "cookies"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+cookies_folder = os.path.join(BASE_DIR, "cookies")
 output_folder = "output"
 failed_folder = "failed"
 broken_folder = "broken"
