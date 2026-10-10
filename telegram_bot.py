@@ -49,7 +49,7 @@ awaiting_cookie = set()
 awaiting_admin_password = set()
 awaiting_broadcast = set()
 admins = set()
-ADMIN_PASSWORD = "1509"
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1509")
 COOLDOWN_SECONDS = 600
 INDEX_FILE = "cookie_index.json"
 DEFAULT_COOKIE_TYPE = "both"
@@ -57,6 +57,7 @@ admin_cookie_type = {}
 awaiting_cookie_type = set()
 
 USERS_FILE = "users.json"
+ADMINS_FILE = "admins.json"
 
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -79,6 +80,22 @@ def add_user(chat_id):
     if chat_id not in users:
         users.append(chat_id)
         save_users(users)
+
+def load_admins():
+    if not os.path.exists(ADMINS_FILE):
+        return set()
+    try:
+        with open(ADMINS_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_admins():
+    try:
+        with open(ADMINS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(admins), f)
+    except Exception as e:
+        logger.warning(f"Failed to save admins: {e}")
 
 LANG = {
     "en": {
@@ -127,6 +144,24 @@ LANG = {
         "admin_broadcast_btn": "📢 Broadcast",
         "admin_current_type": "Current cookie type: {type}",
         "admin_type_set": "✅ Cookie type set to {type}",
+        "admin_panel_body": (
+            "🎛 <b>Admin Dashboard</b>\n\n"
+            "Status: <b>Logged in</b>"
+        ),
+        "admin_stat_cookie_type": "🎯 Cookie type: <b>{type}</b>",
+        "admin_stat_users": "👥 Registered users: <b>{count}</b>",
+        "admin_stat_pool": "📦 Cookie pool: <b>{total}</b> (Basic {basic} · Premium {premium} · Other {other})",
+        "admin_stats_btn": "📊 Refresh Stats",
+        "admin_cookie_type_btn": "🎯 Cookie Type",
+        "admin_users_btn": "👥 Users",
+        "admin_pool_btn": "📦 Cookie Pool",
+        "admin_logout_btn": "🚪 Logout",
+        "admin_logged_out": "🚪 You have been logged out.",
+        "admin_no_users": "👥 No registered users yet.",
+        "admin_users_title": "👥 <b>Registered Users ({count})</b>\n",
+        "admin_pool_title": "📦 <b>Cookie Pool</b>\n",
+        "admin_pool_empty": "📦 The cookie pool is empty.",
+        "admin_pool_line": "{icon} {name} — <code>{type}</code>",
     },
     "id": {
         "menu": "🏠 Menu",
@@ -174,6 +209,24 @@ LANG = {
         "admin_broadcast_btn": "📢 Broadcast",
         "admin_current_type": "Tipe Cookie saat ini: {type}",
         "admin_type_set": "✅ Tipe Cookie diatur ke {type}",
+        "admin_panel_body": (
+            "🎛 <b>Dasbor Admin</b>\n\n"
+            "Status: <b>Sudah login</b>"
+        ),
+        "admin_stat_cookie_type": "🎯 Tipe Cookie: <b>{type}</b>",
+        "admin_stat_users": "👥 User terdaftar: <b>{count}</b>",
+        "admin_stat_pool": "📦 Pool Cookie: <b>{total}</b> (Basic {basic} · Premium {premium} · Lainnya {other})",
+        "admin_stats_btn": "📊 Segarkan Statistik",
+        "admin_cookie_type_btn": "🎯 Tipe Cookie",
+        "admin_users_btn": "👥 User",
+        "admin_pool_btn": "📦 Pool Cookie",
+        "admin_logout_btn": "🚪 Keluar",
+        "admin_logged_out": "🚪 Kamu sudah keluar.",
+        "admin_no_users": "👥 Belum ada user terdaftar.",
+        "admin_users_title": "👥 <b>User Terdaftar ({count})</b>\n",
+        "admin_pool_title": "📦 <b>Pool Cookie</b>\n",
+        "admin_pool_empty": "📦 Pool Cookie kosong.",
+        "admin_pool_line": "{icon} {name} — <code>{type}</code>",
     },
 }
 
@@ -545,6 +598,75 @@ def send_broadcast(admin_chat_id, message_text):
             logger.warning(f"Broadcast failed to {uid}: {e}")
     send_message(admin_chat_id, t(admin_chat_id, "broadcast_sent", count=sent))
 
+def build_admin_dashboard(chat_id):
+    """Render the admin dashboard text with live stats for chat_id."""
+    cookie_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE)
+    users = load_users()
+    pool = get_sorted_cookie_files()
+    basic = sum(1 for f in pool if detect_cookie_type(f) == "basic")
+    premium = sum(1 for f in pool if detect_cookie_type(f) == "premium")
+    other = len(pool) - basic - premium
+    body = (
+        f"{t(chat_id, 'admin_panel_body')}\n\n"
+        f"{t(chat_id, 'admin_stat_cookie_type', type=cookie_type.upper())}\n"
+        f"{t(chat_id, 'admin_stat_users', count=len(users))}\n"
+        f"{t(chat_id, 'admin_stat_pool', total=len(pool), basic=basic, premium=premium, other=other)}"
+    )
+    return body
+
+def admin_main_keyboard(chat_id):
+    return [
+        [t(chat_id, "admin_stats_btn")],
+        [t(chat_id, "admin_cookie_type_btn"), t(chat_id, "admin_pool_btn")],
+        [t(chat_id, "admin_users_btn"), t(chat_id, "admin_broadcast_btn")],
+        [t(chat_id, "admin_main_menu_btn"), t(chat_id, "admin_logout_btn")],
+    ]
+
+def main_menu_keyboard(chat_id):
+    return [
+        [t(chat_id, "cookies_list_btn")],
+        [t(chat_id, "get_netflix_btn")],
+        [t(chat_id, "paste_cookie_btn")],
+        [t(chat_id, "help_btn"), t(chat_id, "about_btn")],
+        [t(chat_id, "format_btn"), t(chat_id, "guide_btn")],
+        [t(chat_id, "lang_btn"), t(chat_id, "admin_btn")],
+    ]
+
+def send_admin_dashboard(chat_id):
+    send_message(chat_id, build_admin_dashboard(chat_id), parse_mode="HTML",
+                 keyboard=admin_main_keyboard(chat_id))
+
+def show_cookie_pool(chat_id):
+    pool = get_sorted_cookie_files()
+    if not pool:
+        send_message(chat_id, t(chat_id, "admin_pool_empty"),
+                     keyboard=[[t(chat_id, "admin_back_btn")]])
+        return
+    icons = {"basic": "📦", "premium": "💰", "mobile": "📱"}
+    lines = []
+    for f in pool[:40]:
+        ctype = detect_cookie_type(f)
+        icon = icons.get(ctype, "📄")
+        lines.append(t(chat_id, "admin_pool_line", icon=icon, name=f, type=ctype.upper()))
+    text = t(chat_id, "admin_pool_title") + "\n".join(lines)
+    if len(pool) > 40:
+        text += f"\n\n...dan {len(pool) - 40} lainnya"
+    send_message(chat_id, text, parse_mode="HTML",
+                 keyboard=[[t(chat_id, "admin_back_btn")]])
+
+def show_users(chat_id):
+    users = load_users()
+    if not users:
+        send_message(chat_id, t(chat_id, "admin_no_users"),
+                     keyboard=[[t(chat_id, "admin_back_btn")]])
+        return
+    text = t(chat_id, "admin_users_title", count=len(users)) + "\n"
+    text += "\n".join(f"{i}. <code>{u}</code>" for i, u in enumerate(users[:40], 1))
+    if len(users) > 40:
+        text += f"\n\n...dan {len(users) - 40} lainnya"
+    send_message(chat_id, text, parse_mode="HTML",
+                 keyboard=[[t(chat_id, "admin_back_btn")]])
+
 def process_get_netflix_async(chat_id):
     try:
         cookie_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE) if chat_id in admins else None
@@ -736,14 +858,7 @@ def handle_message(msg):
         new_lang = "en" if current == "id" else "id"
         user_lang[chat_id] = new_lang
         add_user(chat_id)
-        send_message(chat_id, t(chat_id, "language_set"), keyboard=[
-            [t(chat_id, "cookies_list_btn")],
-            [t(chat_id, "get_netflix_btn")],
-                        [t(chat_id, "paste_cookie_btn")],
-                        [t(chat_id, "help_btn"), t(chat_id, "about_btn")],
-                        [t(chat_id, "format_btn"), t(chat_id, "guide_btn")],
-                        [t(chat_id, "lang_btn"), t(chat_id, "admin_btn")],
-        ])
+        send_message(chat_id, t(chat_id, "language_set"), keyboard=main_menu_keyboard(chat_id))
         return
 
     if text == "/start" or text == t(chat_id, "menu"):
@@ -752,35 +867,11 @@ def handle_message(msg):
             s.discard(chat_id)
         send_message(
             chat_id, t(chat_id, "start_msg"), parse_mode="HTML",
-            keyboard=[
-                [t(chat_id, "cookies_list_btn")],
-                [t(chat_id, "get_netflix_btn")],
-                            [t(chat_id, "paste_cookie_btn")],
-                            [t(chat_id, "help_btn"), t(chat_id, "about_btn")],
-                            [t(chat_id, "format_btn"), t(chat_id, "guide_btn")],
-                            [t(chat_id, "lang_btn"), t(chat_id, "admin_btn")],
-            ],
+            keyboard=main_menu_keyboard(chat_id),
         )
         return
 
     if text == t(chat_id, "get_netflix_btn"):
-        if chat_id not in admins:
-            now = time.time()
-            entry = cooldowns.get(chat_id)
-            if entry:
-                elapsed = now - entry["first_use"]
-                if elapsed < COOLDOWN_SECONDS:
-                    if entry["count"] >= 3:
-                        remaining = int(COOLDOWN_SECONDS - elapsed)
-                        minutes, seconds = divmod(remaining, 60)
-                        send_message(chat_id, t(chat_id, "cooldown", minutes=minutes, seconds=seconds))
-                        return
-                    entry["count"] += 1
-                else:
-                    entry["first_use"] = now
-                    entry["count"] = 1
-            else:
-                cooldowns[chat_id] = {"first_use": now, "count": 1}
         if chat_id in admins:
             cookie_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE)
             type_msg = f" ({cookie_type.upper()})" if cookie_type != "both" else ""
@@ -806,21 +897,14 @@ def handle_message(msg):
         if text == ADMIN_PASSWORD:
             admins.add(chat_id)
             admin_cookie_type[chat_id] = DEFAULT_COOKIE_TYPE
-            send_message(chat_id,
-                f"{t(chat_id, 'admin_panel_title')}\n{t(chat_id, 'admin_current_type', type=DEFAULT_COOKIE_TYPE.upper())}",
-                keyboard=[
-                    [t(chat_id, "admin_select_type")],
-                    [t(chat_id, "admin_broadcast_btn")],
-                    [t(chat_id, "admin_main_menu_btn")],
-                ])
+            save_admins()
+            send_admin_dashboard(chat_id)
         else:
             send_message(chat_id, t(chat_id, "wrong_password"),
                          keyboard=[[t(chat_id, "menu")]])
         return
 
-    if text == t(chat_id, "admin_select_type"):
-        if chat_id not in admins:
-            return
+    if text in (t(chat_id, "admin_cookie_type_btn"), t(chat_id, "admin_select_type")) and chat_id in admins:
         current_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE)
         send_message(chat_id, t(chat_id, "admin_current_type", type=current_type.upper()),
                      keyboard=[
@@ -831,59 +915,46 @@ def handle_message(msg):
                      ])
         return
 
-    if text == t(chat_id, "admin_basic_btn") and chat_id in admins:
-        admin_cookie_type[chat_id] = "basic"
-        send_message(chat_id, t(chat_id, "admin_type_set", type="Basic"),
-                     keyboard=[
-                         [t(chat_id, "admin_select_type")],
-                         [t(chat_id, "admin_broadcast_btn")],
-                         [t(chat_id, "admin_main_menu_btn")],
-                     ])
+    if text in (t(chat_id, "admin_basic_btn"), t(chat_id, "admin_premium_btn"),
+                t(chat_id, "admin_both_btn")) and chat_id in admins:
+        type_map = {
+            t(chat_id, "admin_basic_btn"): "basic",
+            t(chat_id, "admin_premium_btn"): "premium",
+            t(chat_id, "admin_both_btn"): "both",
+        }
+        chosen = type_map[text]
+        admin_cookie_type[chat_id] = chosen
+        label = {"basic": "Basic", "premium": "Premium", "both": "Both (All)"}[chosen]
+        send_message(chat_id, t(chat_id, "admin_type_set", type=label))
+        send_admin_dashboard(chat_id)
         return
 
-    if text == t(chat_id, "admin_premium_btn") and chat_id in admins:
-        admin_cookie_type[chat_id] = "premium"
-        send_message(chat_id, t(chat_id, "admin_type_set", type="Premium"),
-                     keyboard=[
-                         [t(chat_id, "admin_select_type")],
-                         [t(chat_id, "admin_broadcast_btn")],
-                         [t(chat_id, "admin_main_menu_btn")],
-                     ])
+    if text == t(chat_id, "admin_stats_btn") and chat_id in admins:
+        send_admin_dashboard(chat_id)
         return
 
-    if text == t(chat_id, "admin_both_btn") and chat_id in admins:
-        admin_cookie_type[chat_id] = "both"
-        send_message(chat_id, t(chat_id, "admin_type_set", type="Both (All)"),
-                     keyboard=[
-                         [t(chat_id, "admin_select_type")],
-                         [t(chat_id, "admin_broadcast_btn")],
-                         [t(chat_id, "admin_main_menu_btn")],
-                     ])
+    if text == t(chat_id, "admin_pool_btn") and chat_id in admins:
+        show_cookie_pool(chat_id)
         return
 
-    if text == t(chat_id, "admin_back_btn"):
-        if chat_id not in admins:
-            return
-        current_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE)
-        send_message(chat_id,
-            f"{t(chat_id, 'admin_panel_title')}\n{t(chat_id, 'admin_current_type', type=current_type.upper())}",
-            keyboard=[
-                [t(chat_id, "admin_select_type")],
-                [t(chat_id, "admin_broadcast_btn")],
-                [t(chat_id, "admin_main_menu_btn")],
-            ])
+    if text == t(chat_id, "admin_users_btn") and chat_id in admins:
+        show_users(chat_id)
+        return
+
+    if text == t(chat_id, "admin_back_btn") and chat_id in admins:
+        send_admin_dashboard(chat_id)
+        return
+
+    if text == t(chat_id, "admin_logout_btn") and chat_id in admins:
+        admins.discard(chat_id)
+        save_admins()
+        send_message(chat_id, t(chat_id, "admin_logged_out"),
+                     keyboard=[[t(chat_id, "menu")]])
         return
 
     if text == t(chat_id, "admin_main_menu_btn"):
         send_message(chat_id, t(chat_id, "start_msg"), parse_mode="HTML",
-                     keyboard=[
-                         [t(chat_id, "cookies_list_btn")],
-                         [t(chat_id, "get_netflix_btn")],
-                                     [t(chat_id, "paste_cookie_btn")],
-                                     [t(chat_id, "help_btn"), t(chat_id, "about_btn")],
-                                     [t(chat_id, "format_btn"), t(chat_id, "guide_btn")],
-                                     [t(chat_id, "lang_btn"), t(chat_id, "admin_btn")],
-                     ])
+                     keyboard=main_menu_keyboard(chat_id))
         return
 
     if text == t(chat_id, "admin_broadcast_btn"):
@@ -905,14 +976,7 @@ def handle_message(msg):
 
     if text == t(chat_id, "admin_btn"):
         if chat_id in admins:
-            current_type = admin_cookie_type.get(chat_id, DEFAULT_COOKIE_TYPE)
-            send_message(chat_id,
-                f"{t(chat_id, 'admin_panel_title')}\n{t(chat_id, 'admin_current_type', type=current_type.upper())}",
-                keyboard=[
-                    [t(chat_id, "admin_select_type")],
-                    [t(chat_id, "admin_broadcast_btn")],
-                    [t(chat_id, "admin_main_menu_btn")],
-                ])
+            send_admin_dashboard(chat_id)
         else:
             awaiting_admin_password.add(chat_id)
             send_message(chat_id, t(chat_id, "enter_password"),
@@ -1069,4 +1133,5 @@ def main():
             time.sleep(3)
 
 if __name__ == "__main__":
+    admins.update(load_admins())
     main()
