@@ -2,6 +2,12 @@
 .env
 admins.json
 
+# Cookie data (sensitive)
+cookies/
+failed/
+broken/
+output/
+
 # Python
 __pycache__/
 *.py[cod]

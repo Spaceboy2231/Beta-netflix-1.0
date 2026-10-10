@@ -59,6 +59,10 @@ awaiting_cookie_type = set()
 USERS_FILE = "users.json"
 ADMINS_FILE = "admins.json"
 
+# Check-all background job state
+check_all_running = {}   # chat_id -> {"total": int, "done": int, "alive": int, "dead": int, "error": int, "finished": bool}
+awaiting_checkall_confirm = set()
+
 def load_users():
     if not os.path.exists(USERS_FILE):
         return []
@@ -155,6 +159,17 @@ LANG = {
         "admin_cookie_type_btn": "🎯 Cookie Type",
         "admin_users_btn": "👥 Users",
         "admin_pool_btn": "📦 Cookie Pool",
+        "admin_cookies_list_btn": "📋 List Cookies",
+        "admin_cookies_title": "📋 <b>Cookie List ({count})</b>",
+        "admin_cookies_empty": "📋 No cookies in the folder.",
+        "admin_checkall_btn": "🔍 Check All Cookies",
+        "admin_checkall_confirm": "⚠️ <b>Check all {count} cookies?</b>\n\nThis will test every cookie and permanently delete the dead ones. It may take a while.",
+        "admin_checkall_yes_btn": "✅ Yes, check all",
+        "admin_checkall_no_btn": "❌ Cancel",
+        "admin_checkall_start": "🔍 Checking {count} cookies... I'll report back when done.",
+        "admin_checkall_running": "⏳ A check-all job is already running. Please wait for it to finish.",
+        "admin_checkall_empty": "📭 No cookies in the pool to check.",
+        "admin_checkall_done": "✅ <b>Check all finished</b>\n\nTotal checked: <b>{total}</b>\n✅ Alive: <b>{alive}</b>\n🗑️ Dead (removed): <b>{dead}</b>\n⚠️ Errors: <b>{error}</b>",
         "admin_logout_btn": "🚪 Logout",
         "admin_logged_out": "🚪 You have been logged out.",
         "admin_no_users": "👥 No registered users yet.",
@@ -220,6 +235,17 @@ LANG = {
         "admin_cookie_type_btn": "🎯 Tipe Cookie",
         "admin_users_btn": "👥 User",
         "admin_pool_btn": "📦 Pool Cookie",
+        "admin_cookies_list_btn": "📋 List Cookies",
+        "admin_cookies_title": "📋 <b>Daftar Cookie ({count})</b>",
+        "admin_cookies_empty": "📋 Tidak ada cookie di folder.",
+        "admin_checkall_btn": "🔍 Cek Semua Cookie",
+        "admin_checkall_confirm": "⚠️ <b>Cek semua {count} cookie?</b>\n\nIni akan menguji setiap cookie dan menghapus permanen yang sudah mati. Bisa makan waktu cukup lama.",
+        "admin_checkall_yes_btn": "✅ Ya, cek semua",
+        "admin_checkall_no_btn": "❌ Batal",
+        "admin_checkall_start": "🔍 Mengecek {count} cookie... akan kukabari kalau sudah selesai.",
+        "admin_checkall_running": "⏳ Proses cek-semua sedang berjalan. Mohon tunggu sampai selesai.",
+        "admin_checkall_empty": "📭 Tidak ada cookie di pool untuk dicek.",
+        "admin_checkall_done": "✅ <b>Cek semua selesai</b>\n\nTotal dicek: <b>{total}</b>\n✅ Hidup: <b>{alive}</b>\n🗑️ Mati (dihapus): <b>{dead}</b>\n⚠️ Error: <b>{error}</b>",
         "admin_logout_btn": "🚪 Keluar",
         "admin_logged_out": "🚪 Kamu sudah keluar.",
         "admin_no_users": "👥 Belum ada user terdaftar.",
@@ -618,13 +644,14 @@ def admin_main_keyboard(chat_id):
     return [
         [t(chat_id, "admin_stats_btn")],
         [t(chat_id, "admin_cookie_type_btn"), t(chat_id, "admin_pool_btn")],
+        [t(chat_id, "admin_cookies_list_btn")],
+        [t(chat_id, "admin_checkall_btn")],
         [t(chat_id, "admin_users_btn"), t(chat_id, "admin_broadcast_btn")],
         [t(chat_id, "admin_main_menu_btn"), t(chat_id, "admin_logout_btn")],
     ]
 
 def main_menu_keyboard(chat_id):
     return [
-        [t(chat_id, "cookies_list_btn")],
         [t(chat_id, "get_netflix_btn")],
         [t(chat_id, "paste_cookie_btn")],
         [t(chat_id, "help_btn"), t(chat_id, "about_btn")],
@@ -666,6 +693,69 @@ def show_users(chat_id):
         text += f"\n\n...dan {len(users) - 40} lainnya"
     send_message(chat_id, text, parse_mode="HTML",
                  keyboard=[[t(chat_id, "admin_back_btn")]])
+
+def check_all_cookies_async(chat_id):
+    """Check every cookie in the pool in parallel; delete the dead ones."""
+    files = get_sorted_cookie_files()
+    if not files:
+        send_message(chat_id, t(chat_id, "admin_checkall_empty"),
+                     keyboard=[[t(chat_id, "admin_back_btn")]])
+        return
+
+    state = {
+        "total": len(files), "done": 0,
+        "alive": 0, "dead": 0, "error": 0, "finished": False,
+    }
+    check_all_running[chat_id] = state
+    send_message(chat_id, t(chat_id, "admin_checkall_start", count=len(files)))
+
+    lock = threading.Lock()
+
+    def check_one(fname):
+        fpath = os.path.join(cookies_folder, fname)
+        status = "error"
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            result = check_single_cookie(content)
+            status = "alive" if result.get("ok") else "dead"
+        except Exception as e:
+            logger.warning(f"check_all: error reading {fname}: {e}")
+            status = "error"
+
+        if status == "dead":
+            try:
+                os.remove(fpath)
+                logger.info(f"check_all: removed dead cookie {fname}")
+            except Exception as e:
+                logger.warning(f"check_all: failed to remove {fname}: {e}")
+
+        with lock:
+            state["done"] += 1
+            state[status] += 1
+
+    threads = []
+    for fname in files:
+        th = threading.Thread(target=check_one, args=(fname,), daemon=True)
+        th.start()
+        threads.append(th)
+        # cap concurrent requests to avoid hammering
+        while sum(1 for x in threads if x.is_alive()) >= 10:
+            time.sleep(0.05)
+
+    for th in threads:
+        th.join()
+
+    state["finished"] = True
+    send_message(
+        chat_id,
+        t(chat_id, "admin_checkall_done",
+          total=state["total"], alive=state["alive"],
+          dead=state["dead"], error=state["error"]),
+        parse_mode="HTML",
+        keyboard=[[t(chat_id, "admin_back_btn")]],
+    )
+    logger.info(f"check_all done for {chat_id}: {state}")
 
 def process_get_netflix_async(chat_id):
     try:
@@ -937,6 +1027,50 @@ def handle_message(msg):
         show_cookie_pool(chat_id)
         return
 
+    if text == t(chat_id, "admin_cookies_list_btn") and chat_id in admins:
+        add_user(chat_id)
+        cookie_files = get_sorted_cookie_files()
+        if not cookie_files:
+            send_message(chat_id, t(chat_id, "admin_cookies_empty"),
+                         keyboard=[[t(chat_id, "admin_back_btn")]])
+            return
+        total = len(cookie_files)
+        list_text = t(chat_id, "admin_cookies_title", count=total) + "\n"
+        for i, f in enumerate(cookie_files[:40], 1):
+            list_text += f"{i}. {f}\n"
+        if total > 40:
+            list_text += f"\n...dan {total - 40} lainnya"
+        send_message(chat_id, list_text, parse_mode="HTML",
+                     keyboard=[[t(chat_id, "admin_back_btn")]])
+        return
+
+    if text == t(chat_id, "admin_checkall_btn") and chat_id in admins:
+        if chat_id in check_all_running and not check_all_running[chat_id].get("finished"):
+            send_message(chat_id, t(chat_id, "admin_checkall_running"),
+                         keyboard=[[t(chat_id, "admin_back_btn")]])
+            return
+        awaiting_checkall_confirm.add(chat_id)
+        total = len(get_sorted_cookie_files())
+        send_message(chat_id, t(chat_id, "admin_checkall_confirm", count=total),
+                     parse_mode="HTML",
+                     keyboard=[
+                         [t(chat_id, "admin_checkall_yes_btn")],
+                         [t(chat_id, "admin_checkall_no_btn")],
+                     ])
+        return
+
+    if chat_id in awaiting_checkall_confirm:
+        awaiting_checkall_confirm.discard(chat_id)
+        if text == t(chat_id, "admin_checkall_yes_btn"):
+            threading.Thread(
+                target=check_all_cookies_async,
+                args=(chat_id,),
+                daemon=True,
+            ).start()
+        else:
+            send_admin_dashboard(chat_id)
+        return
+
     if text == t(chat_id, "admin_users_btn") and chat_id in admins:
         show_users(chat_id)
         return
@@ -1001,21 +1135,6 @@ def handle_message(msg):
     if text == t(chat_id, "format_btn"):
         send_message(chat_id, t(chat_id, "format_msg"), parse_mode="HTML",
                      keyboard=[[t(chat_id, "menu")]])
-        return
-
-    if text == "/cookies" or text == t(chat_id, "cookies_list_btn"):
-        add_user(chat_id)
-        cookie_files = get_sorted_cookie_files()
-        if not cookie_files:
-            send_message(chat_id, "📂 <b>Folder cookies kosong.</b>\n\nKirim cookie .txt atau klik 📋 Saya paste cookie sendiri.")
-            return
-        total = len(cookie_files)
-        list_text = f"📂 <b>Daftar Cookies ({total})</b>\n\n"
-        for i, f in enumerate(cookie_files[:20], 1):
-            list_text += f"{i}. {f}\n"
-        if total > 20:
-            list_text += f"\n...dan {total - 20} lagi"
-        send_message(chat_id, list_text, parse_mode="HTML", keyboard=[[t(chat_id, "menu")]])
         return
 
     if text.startswith("/"):
